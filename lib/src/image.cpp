@@ -1,17 +1,79 @@
 #include <cvc/image.hpp>
 
+#include <zlib-ng.h>
+
+#include <algorithm>
+#include <climits>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+namespace
+{
+
+    // stb_image_write's own deflate runs at ~60 MiB/s; PNG compression goes through zlib-ng instead.
+    // The pixels are unchanged, PNG is lossless.
+    constexpr int png_filter       = 0;
+    constexpr int deflate_level    = 1;
+    constexpr int deflate_strategy = Z_RLE;
+
+    // Matches the STBIW_ZLIB_COMPRESS signature: returns a zlib stream allocated with malloc, freed by stb.
+    unsigned char* zlib_ng_compress(unsigned char* data, int length, int* out_length, int /*quality*/)
+    {
+        zng_stream stream{};
+        if (length < 0 || zng_deflateInit2(&stream, deflate_level, Z_DEFLATED, 15, 8, deflate_strategy) != Z_OK)
+        {
+            return nullptr;
+        }
+
+        const std::size_t bound    = zng_deflateBound(&stream, static_cast<unsigned long>(length));
+        std::size_t       capacity = std::min(bound, static_cast<std::size_t>(length) / 16 + 65536);
+        auto*             out      = static_cast<unsigned char*>(std::malloc(capacity));
+
+        stream.next_in   = data;
+        stream.avail_in  = static_cast<std::uint32_t>(length);
+        stream.next_out  = out;
+        stream.avail_out = static_cast<std::uint32_t>(capacity);
+
+        int result = out ? zng_deflate(&stream, Z_FINISH) : Z_MEM_ERROR;
+        while ((result == Z_OK || result == Z_BUF_ERROR) && capacity < bound)
+        {
+            capacity    = std::min(bound, capacity * 2);
+            auto* grown = static_cast<unsigned char*>(std::realloc(out, capacity));
+            if (!grown)
+            {
+                result = Z_MEM_ERROR;
+                break;
+            }
+            out              = grown;
+            stream.next_out  = out + stream.total_out;
+            stream.avail_out = static_cast<std::uint32_t>(capacity - stream.total_out);
+            result           = zng_deflate(&stream, Z_FINISH);
+        }
+
+        zng_deflateEnd(&stream);
+        if (result != Z_STREAM_END)
+        {
+            std::free(out);
+            return nullptr;
+        }
+        *out_length = static_cast<int>(stream.total_out);
+        return out;
+    }
+
+}
+
+#define STBIW_ZLIB_COMPRESS zlib_ng_compress
+#define STBIW_CRC32(buffer, length) zng_crc32(0, buffer, static_cast<std::uint32_t>(length))
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
 #define STBI_ONLY_PNG
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-
-#include <climits>
-#include <cstddef>
-#include <memory>
-#include <stdexcept>
-#include <string>
 
 namespace cvc
 {
@@ -46,6 +108,14 @@ namespace cvc
         {
             std::filesystem::create_directories(path.parent_path());
         }
+
+        // stb tries all five row filters per row unless one is forced; the setting is a global, set once.
+        static const bool filter_forced = []
+        {
+            stbi_write_force_png_filter = png_filter;
+            return true;
+        }();
+        (void)filter_forced;
 
         const int stride = image.width * image.channels;
         if (!stbi_write_png(path.string().c_str(), image.width, image.height, image.channels, image.pixels.data(), stride))

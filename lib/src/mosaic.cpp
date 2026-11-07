@@ -15,10 +15,12 @@ namespace cvc
     namespace
     {
 
-        constexpr double label_ratio = 1.0 / 32.0;
+        // Label cap height relative to the smaller tile side, so it stays about 1/10 of the tile on both axes.
+        constexpr double label_ratio = 1.0 / 10.0;
+        constexpr double gap_ratio   = 1.0 / 256.0;
 
         constexpr Color background_color{64, 64, 64, 255};
-        constexpr Color label_color{24, 24, 24, 255};
+        constexpr Color outline_color{24, 24, 24, 255};
         constexpr Color text_color{255, 255, 255, 255};
 
         std::size_t rows_for(std::size_t count, std::size_t columns) { return (count + columns - 1) / columns; }
@@ -52,11 +54,15 @@ namespace cvc
             }
         }
 
+        int outline_for(int cap_height) { return std::max(1, cap_height / 14); }
+
+        int margin_for(int cap_height) { return std::max(outline_for(cap_height) + 1, cap_height / 3); }
+
     }
 
     int MosaicLayout::width() const { return columns * tile_width + (columns + 1) * gap; }
 
-    int MosaicLayout::height() const { return rows * (label_height + tile_height) + (rows + 1) * gap; }
+    int MosaicLayout::height() const { return rows * tile_height + (rows + 1) * gap; }
 
     int MosaicLayout::cell_x(std::size_t index) const
     {
@@ -65,7 +71,7 @@ namespace cvc
 
     int MosaicLayout::cell_y(std::size_t index) const
     {
-        return gap + static_cast<int>(index / static_cast<std::size_t>(columns)) * (label_height + tile_height + gap);
+        return gap + static_cast<int>(index / static_cast<std::size_t>(columns)) * (tile_height + gap);
     }
 
     MosaicPlan plan_mosaic(std::size_t count, const OrthographicCamera& camera, int resolution, PixelFormat format)
@@ -80,7 +86,7 @@ namespace cvc
         }
 
         const double      aspect      = camera.half_width / camera.half_height;
-        const double      cell_height = 1.0 / aspect + label_ratio;
+        const double      cell_height = 1.0 / aspect;
         const std::size_t columns     = choose_columns(count, cell_height);
         const std::size_t rows        = rows_for(count, columns);
         const double      tile_width  = resolution / std::max(static_cast<double>(columns), rows * cell_height);
@@ -89,14 +95,13 @@ namespace cvc
         MosaicPlan plan;
         plan.tile_camera = make_camera(camera.half_width, camera.half_height, std::max(1, static_cast<int>(long_side)));
 
-        plan.layout.columns      = static_cast<int>(columns);
-        plan.layout.rows         = static_cast<int>(rows);
-        plan.layout.tile_width   = plan.tile_camera.width;
-        plan.layout.tile_height  = plan.tile_camera.height;
-        plan.layout.label_height = std::max(16, static_cast<int>(std::lround(plan.tile_camera.width * label_ratio)));
-        plan.layout.gap          = std::max(2, plan.layout.label_height / 8);
-        plan.tile_channels       = channel_count(format);
-        plan.channels            = opaque_channel_count(format);
+        plan.layout.columns     = static_cast<int>(columns);
+        plan.layout.rows        = static_cast<int>(rows);
+        plan.layout.tile_width  = plan.tile_camera.width;
+        plan.layout.tile_height = plan.tile_camera.height;
+        plan.layout.gap         = std::max(2, static_cast<int>(std::lround(plan.tile_camera.width * gap_ratio)));
+        plan.tile_channels      = channel_count(format);
+        plan.channels           = opaque_channel_count(format);
         return plan;
     }
 
@@ -168,23 +173,12 @@ namespace cvc
         const int x = layout_.cell_x(index);
         const int y = layout_.cell_y(index);
 
-        fill(image_, x, y, layout_.tile_width, layout_.label_height, label_color);
-        const int padding     = layout_.label_height / 4;
-        int       text_height = layout_.label_height * 3 / 4;
-        const int text_space  = layout_.tile_width - 2 * padding;
-        const int full_width  = text_width(label, text_height);
-        if (full_width > text_space && full_width > 0)
-        {
-            text_height = std::max(1, text_height * text_space / full_width);
-        }
-        draw_text(image_, x + padding, y + (layout_.label_height - text_height) / 2, text_height, label, text_color);
-
         const int  colors    = image_.channels;
         const bool has_alpha = tile.channels > colors;
         for (int row = 0; row < tile.height; ++row)
         {
             const std::uint8_t* source = &tile.pixels[static_cast<std::size_t>(row) * tile.width * tile.channels];
-            std::uint8_t*       target = &image_.pixels[(static_cast<std::size_t>(y + layout_.label_height + row) * image_.width + x) * colors];
+            std::uint8_t*       target = &image_.pixels[(static_cast<std::size_t>(y + row) * image_.width + x) * colors];
             for (int column = 0; column < tile.width; ++column, source += tile.channels, target += colors)
             {
                 const unsigned alpha = has_alpha ? source[colors] : 255u;
@@ -194,6 +188,18 @@ namespace cvc
                 }
             }
         }
+
+        int        cap_height = std::max(1, static_cast<int>(std::lround(std::min(tile.width, tile.height) * label_ratio)));
+        TextBounds bounds     = text_bounds(label, cap_height);
+        const int  space      = tile.width - 2 * margin_for(cap_height);
+        if (bounds.width > space && bounds.width > 0)
+        {
+            cap_height = std::max(1, cap_height * std::max(1, space) / bounds.width);
+            bounds     = text_bounds(label, cap_height);
+        }
+        const int margin = margin_for(cap_height);
+        draw_outlined_text(image_, std::max(x + margin, x + tile.width - margin - bounds.width), y + margin, cap_height,
+                           label, text_color, outline_color, outline_for(cap_height));
     }
 
     Image Mosaic::release() { return std::move(image_); }

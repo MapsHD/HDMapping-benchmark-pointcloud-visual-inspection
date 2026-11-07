@@ -12,12 +12,11 @@ namespace cvc
 
     struct MosaicLayout
     {
-        int columns      = 0;
-        int rows         = 0;
-        int tile_width   = 0;
-        int tile_height  = 0;
-        int label_height = 0;
-        int gap          = 0;
+        int columns     = 0;
+        int rows        = 0;
+        int tile_width  = 0;
+        int tile_height = 0;
+        int gap         = 0;
 
         int width() const;
         int height() const;
