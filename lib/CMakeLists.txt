@@ -19,4 +19,5 @@ target_link_libraries(cvc
         OpenCL::OpenCL
         happly
         stb
+        zlib-ng::zlibstatic
 )

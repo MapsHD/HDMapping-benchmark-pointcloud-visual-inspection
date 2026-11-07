@@ -20,6 +20,12 @@ add_subdirectory(${EXTERNAL_DIR}/OpenCL-Headers EXCLUDE_FROM_ALL)
 set(ENABLE_OPENCL_LAYERINFO OFF CACHE BOOL "" FORCE)
 add_subdirectory(${EXTERNAL_DIR}/OpenCL-ICD-Loader EXCLUDE_FROM_ALL)
 
+set(ZLIB_COMPAT OFF)
+set(WITH_GZFILEOP OFF)
+set(BUILD_TESTING OFF)
+set(SKIP_INSTALL_ALL ON)
+add_subdirectory(${EXTERNAL_DIR}/zlib-ng EXCLUDE_FROM_ALL)
+
 add_library(happly INTERFACE)
 target_include_directories(happly SYSTEM INTERFACE ${EXTERNAL_DIR}/happly)
 
