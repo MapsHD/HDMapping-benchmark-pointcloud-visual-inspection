@@ -243,7 +243,10 @@ namespace
         const std::filesystem::path    mosaic_dir = options.output_dir / "mosaic";
 
         cvc::OpenCLRenderer renderer;
-        std::cout << "OpenCL device: " << renderer.device_name() << "\n";
+        std::cout << "OpenCL device: " << renderer.device_name() << ", max allocation " << std::fixed << std::setprecision(2)
+                  << static_cast<double>(renderer.max_alloc_bytes()) / static_cast<double>(1ull << 30) << " GiB ("
+                  << renderer.max_alloc_bytes() << " bytes)\n"
+                  << std::defaultfloat;
         std::cout << "Format: " << name_of(format_names(), options.format);
         if (uses_colormap(options.format))
         {

@@ -5,6 +5,7 @@
 #include <cvc/image.hpp>
 #include <cvc/point_cloud.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -29,6 +30,7 @@ namespace cvc
         OpenCLRenderer& operator=(const OpenCLRenderer&) = delete;
 
         const std::string& device_name() const;
+        std::uint64_t      max_alloc_bytes() const;
 
         void upload(const PointCloud& cloud);
 
