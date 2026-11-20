@@ -340,21 +340,54 @@ __kernel void resolve(__global const uint* index, __global const float4* points,
             std::vector<cl_platform_id> platforms(platform_count);
             check(clGetPlatformIDs(platform_count, platforms.data(), nullptr), "clGetPlatformIDs");
 
-            for (const cl_device_type type : {cl_device_type{CL_DEVICE_TYPE_GPU}, cl_device_type{CL_DEVICE_TYPE_ALL}})
+            // Pick the device with the largest single allocation, so the biggest renders and mosaics fit; device type and
+            // speed are ignored. Ties go to the larger global memory, then to enumeration order.
+            cl_device_id best        = nullptr;
+            cl_ulong     best_alloc  = 0;
+            cl_ulong     best_global = 0;
+            for (const cl_platform_id platform : platforms)
             {
-                for (const cl_platform_id platform : platforms)
+                cl_uint device_count = 0;
+                if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &device_count) != CL_SUCCESS || device_count == 0)
                 {
-                    cl_uint device_count = 0;
-                    if (clGetDeviceIDs(platform, type, 0, nullptr, &device_count) != CL_SUCCESS || device_count == 0)
+                    continue;
+                }
+                std::vector<cl_device_id> devices(device_count);
+                if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, device_count, devices.data(), nullptr) != CL_SUCCESS)
+                {
+                    continue;
+                }
+                for (const cl_device_id device : devices)
+                {
+                    cl_bool  available = CL_FALSE;
+                    cl_bool  compiler  = CL_FALSE;
+                    cl_ulong alloc     = 0;
+                    cl_ulong global    = 0;
+                    if (clGetDeviceInfo(device, CL_DEVICE_AVAILABLE, sizeof(available), &available, nullptr) != CL_SUCCESS ||
+                        clGetDeviceInfo(device, CL_DEVICE_COMPILER_AVAILABLE, sizeof(compiler), &compiler, nullptr) !=
+                            CL_SUCCESS ||
+                        clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(alloc), &alloc, nullptr) != CL_SUCCESS ||
+                        clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(global), &global, nullptr) != CL_SUCCESS)
                     {
                         continue;
                     }
-                    std::vector<cl_device_id> devices(device_count);
-                    check(clGetDeviceIDs(platform, type, device_count, devices.data(), nullptr), "clGetDeviceIDs");
-                    return devices.front();
+                    if (!available || !compiler)
+                    {
+                        continue;
+                    }
+                    if (best == nullptr || alloc > best_alloc || (alloc == best_alloc && global > best_global))
+                    {
+                        best        = device;
+                        best_alloc  = alloc;
+                        best_global = global;
+                    }
                 }
             }
-            throw std::runtime_error("no OpenCL device found");
+            if (best == nullptr)
+            {
+                throw std::runtime_error("no OpenCL device found");
+            }
+            return best;
         }
 
         KernelHandle create_kernel(cl_program program, const char* name)
@@ -485,6 +518,8 @@ __kernel void resolve(__global const uint* index, __global const float4* points,
     OpenCLRenderer::~OpenCLRenderer() = default;
 
     const std::string& OpenCLRenderer::device_name() const { return impl_->device_name; }
+
+    std::uint64_t OpenCLRenderer::max_alloc_bytes() const { return impl_->max_alloc; }
 
     void OpenCLRenderer::upload(const PointCloud& cloud)
     {
